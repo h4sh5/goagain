@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt # , QRunnable, QThreadPool, Slot
 from PySide6.QtWidgets import (
 	QApplication,
 	QLabel,
@@ -16,14 +16,106 @@ from PySide6.QtWidgets import (
 	QGridLayout,
 	QTabWidget,
 )
+import socket
+import ssl
+import time
+from multiprocessing.pool import ThreadPool
+
+def elog(s, *args, **kwargs):
+	print(s, *args, **kwargs, file=sys.stderr)
+
 
 class ReplayerWidget(QWidget):
+
+	def send_request(self):
+		lstart = time.time()
+		elog("request worker start:",lstart)
+		encoding = 'utf-8'
+		
+		timeout = 10
+		tls = self.tls_checkbox.checkState() == Qt.Checked
+		req_body = self.request_input.toPlainText()
+		host_port = self.address_input.text()
+		response = b''
+		chunksize = 10240
+		port = None
+		# hostname = socket.getfqdn(host)
+		if not req_body.endswith("\r\n"):
+			req_body += "\r\n"
+		try:
+			port = int(host_port.split(":")[-1])
+		except Exception as e:
+			elog("Bad host/port error:",e)
+			return None
+		host = host_port.rstrip(f":{port}")
+
+		if tls == True: # if QCheckBox is Qt.Checked
+			try:
+				# context = ssl.create_default_context() 
+				# context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+				# context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_3) 
+				context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+				context.minimum_version = ssl.TLSVersion.TLSv1_2
+				context.maximum_version = ssl.TLSVersion.TLSv1_3
+				context.check_hostname = False
+				context.verify_mode = ssl.CERT_NONE # TODO cert checking an option
+				socket.setdefaulttimeout(timeout)
+				ssock = context.wrap_socket(socket.socket())
+				
+				
+				ssock.connect((host, port))
+				
+				elog("sending request body:", req_body)
+				ssock.sendall(req_body.encode(encoding))
+				while True:
+					rdata = ssock.recv(chunksize)
+					response += rdata
+					elog(f"Received {len(rdata)} bytes")
+					if len(rdata) < 1:
+						break
+				ssock.close()
+				
+			except socket.timeout as e:
+				elog("socket timeout:",e)
+			except socket.error as e:
+				elog("socket error:",e)
+			except ssl.SSLError as e:
+				elog("SSL error:",e)
+		else:
+			sock = socket.socket()
+			sock.connect((host, port))
+			sock.sendall(req_body.encode(encoding))
+			while True:
+				rdata = sock.recv(chunksize)
+				response += rdata
+				elog(f"Received {len(rdata)} bytes")
+				if len(rdata) < 1:
+					break
+			sock.close()
+
+
+
+		
+		elog("request worker done:",time.time()-lstart)
+		return response
+
+	def run_send_request(self):
+		decode_encoding = 'utf-8'
+		self.send_button.setEnabled(False)
+		
+		async_result = self.thread_pool.apply_async(self.send_request) # ,('foo','bar')) (arguments can be passed)
+		response_data = async_result.get() 
+		self.response_input.setPlainText(response_data.decode(decode_encoding, 'ignore'))
+		self.send_button.setEnabled(True)
+
 	def __init__(self):
 		super().__init__()
 		self.replayer_tab_layout = QVBoxLayout(self)
 
+		self.thread_pool = ThreadPool(processes=2)
+
 		self.address_label = QLabel()
-		self.address_label.setText("URL or host:port")
+		self.address_label.setText("host:port")
 
 		self.tls_label = QLabel("TLS")
 		self.tls_checkbox = QCheckBox()
@@ -32,6 +124,7 @@ class ReplayerWidget(QWidget):
 
 		self.send_button = QPushButton()
 		self.send_button.setText("send")
+		self.send_button.clicked.connect(self.run_send_request)
 
 		self.request_input = QTextEdit()
 		self.response_input = QTextEdit(readOnly=True)
@@ -41,10 +134,10 @@ class ReplayerWidget(QWidget):
 		self.replayer_tab_layout.addWidget(self.address_input)
 
 		hbox1 = QHBoxLayout()
-		hbox1.addStretch()
 		hbox1.addWidget(self.tls_label)
 		hbox1.addWidget(self.tls_checkbox)
 		hbox1.addWidget(self.send_button)
+		hbox1.addStretch()
 
 
 		
