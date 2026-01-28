@@ -24,6 +24,16 @@ from multiprocessing.pool import ThreadPool
 def elog(s, *args, **kwargs):
 	print(s, *args, **kwargs, file=sys.stderr)
 
+class History():
+
+	def __init__(self, tab_name, address, tls_enable, request_body, response_body, time):
+		self.tab_name = tab_name
+		self.address = address
+		self.tls_enable = tls_enable
+		self.request_body = request_body
+		self.response_body = response_body
+		self.time = time
+
 
 class ReplayerWidget(QWidget):
 
@@ -104,6 +114,7 @@ class ReplayerWidget(QWidget):
 		self.send_button.setEnabled(False)
 		
 		async_result = self.thread_pool.apply_async(self.send_request) # ,('foo','bar')) (arguments can be passed)
+		# TODO better threading
 		response_data = async_result.get() 
 		self.response_input.setPlainText(response_data.decode(decode_encoding, 'ignore'))
 		self.send_button.setEnabled(True)
